@@ -265,9 +265,9 @@ drivers:
         - name: FSLS_USB
           input: USB Clock Controller (USB_48M)
         - name: USB
-          input: USB High Speed Clock (USB_480M)
+          input: USB Clock Controller (USB_48M)
         configuration:
-          usb_clock_source: USB High Speed Clock (USB_480M)
+          usb_clock_source: USB Clock Controller (USB_48M)
           usb_fsls_clock_source: USB Clock Controller (USB_48M)
   XDMAC:
     user_label: XDMAC
