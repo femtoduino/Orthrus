@@ -22,27 +22,51 @@
 #include <MCI.h>
 #include <Crypto.h>
 #include <hpl_delay.h>
+#include <usb_start.h>
 
-enum volume_states { NO_CARDS, ERROR, READY, UNINITIALIZED };
+enum volume_states { NO_CARDS, ERROR, OK, UNINITIALIZED };
 enum button_states { UP, DOWN, IGNORING };
 	
-enum volume_states state;
-enum button_states button_state;
+static enum volume_states state;
+static enum button_states button_state;
 
-struct timer_task milli_task;
+static struct timer_task milli_task;
+
+static uint32_t button_start;
+
+// 128 bit unique ID
+uint8_t unique_id[16];
 
 // Millisecond counter - used for dealing with the button
 volatile uint32_t millis;
-uint32_t button_start;
 
 static void milli_timer_cb(const struct timer_task *const timer_task) {
 	millis++;
 }
 
+#include <hpl_pmc_config.h>
 int main(void)
 {
+
+// Start doesn't do this for you, it seems.
+#if (CONF_XOSC20M_SELECTOR == 16000000)
+	UTMI->UTMI_CKTRIM &= ~UTMI_CKTRIM_FREQ_Msk;
+	UTMI->UTMI_CKTRIM |= UTMI_CKTRIM_FREQ(UTMI_CKTRIM_FREQ_XTAL16);
+#endif
+
 	/* Initializes MCU, drivers and middleware */
 	atmel_start_init();
+
+/*
+	// This doesn't work - we're executing code where this paging happens.
+	// fetch the unique ID
+	memset(unique_id, 0, sizeof(unique_id));
+	EFC->EEFC_FCR = (EEFC_FCR_FKEY_PASSWD | EEFC_FCR_FCMD_STUI);
+	while ((EFC->EEFC_FSR & EEFC_FSR_FRDY) != EEFC_FSR_FRDY);
+	memcpy(unique_id, (void*)0x00400000, sizeof(unique_id));
+	EFC->EEFC_FCR = (EEFC_FCR_FKEY_PASSWD | EEFC_FCR_FCMD_SPUI);
+	while ((EFC->EEFC_FSR & EEFC_FSR_FRDY) != EEFC_FSR_FRDY);
+*/
 
 	aes_sync_enable(&CRYPTOGRAPHY_0);
 
@@ -56,7 +80,8 @@ int main(void)
 	
 	state = NO_CARDS;
 	button_state = UP;
-
+	set_state(NOT_READY);
+	
 	while (1) {
 		
 		bool cards_in = !gpio_get_pin_level(CARD_DETECT_A) && !gpio_get_pin_level(CARD_DETECT_B);
@@ -70,11 +95,11 @@ int main(void)
 				if (!prepVolume()) {
 					state = UNINITIALIZED;
 					goto error;
-				}
-								
-				state = READY;
+				}							
+				state = OK;
 				gpio_set_pin_level(LED_RDY, true);
 				gpio_set_pin_level(LED_ERR, false);
+				set_state(READY);
 				continue;
 error:
 				gpio_set_pin_level(LED_ERR, true);
@@ -86,8 +111,8 @@ error:
 				// cards have just been removed. Turn everything off.
 				shutdown_cards();
 				clearKeys();
-				if (state == READY) {
-					// XXX do something to forcibly unmount the volume
+				if (state == OK) {
+					set_state(NOT_READY);
 				}
 				state = NO_CARDS;
 				gpio_set_pin_level(LED_ERR, false);
@@ -102,13 +127,14 @@ error:
 				button_state = IGNORING;
 				gpio_set_pin_level(LED_ERR, false);
 				gpio_set_pin_level(LED_RDY, false);
-				if (state == READY) {
-					// XXX Have to do something in here to forcibly unmount.
+				if (state == OK) {
+					set_state(BOUNCING);
 				}
 				if (initVolume()) {
 					gpio_set_pin_level(LED_ERR, false);
 					gpio_set_pin_level(LED_RDY, true);
-					state = READY;
+					state = OK;
+					set_state(READY);
 				} else {
 					gpio_set_pin_level(LED_ERR, true);
 					gpio_set_pin_level(LED_RDY, false);
@@ -125,7 +151,7 @@ error:
 		if (button) {
 			switch(button_state) {
 				case UP:
-					if (state == UNINITIALIZED || state == READY) {
+					if (state == UNINITIALIZED || state == OK) {
 						button_state = DOWN;
 						button_start = millis;
 					} else {
@@ -139,7 +165,7 @@ error:
 			}
 		} else {
 			if (button_state != UP) {
-				if (state == READY) {
+				if (state == OK) {
 					gpio_set_pin_level(LED_RDY, true);
 					gpio_set_pin_level(LED_ERR, false);
 				} else if (state == ERROR || state == UNINITIALIZED) {
@@ -149,10 +175,6 @@ error:
 			}
 			button_state = UP;
 		}
-
-/*
-		usb_task();
 		disk_task();
-*/
 	}
 }
