@@ -309,6 +309,8 @@ static bool mscdf_cb_ep_bulk_in(const uint8_t ep, const enum usb_xfer_code rc, c
 	}
 }
 
+static uint8_t ms6_buf[4];
+
 /**
  * \brief Callback invoked when bulk OUT data received
  * \param[in] ep Endpoint number
@@ -346,6 +348,13 @@ static bool mscdf_cb_ep_bulk_out(const uint8_t ep, const enum usb_xfer_code rc, 
 				pcsw->dCSWDataResidue   = 0;
 				return usbdc_xfer(_mscdf_funcd.func_ep_in, pbuf, 36, false);
 
+			case SPC_MODE_SENSE6:
+				memset(ms6_buf, 0, sizeof(ms6_buf));
+				_mscdf_funcd.xfer_stage = MSCDF_DATA_STAGE;
+				pcsw->bCSWStatus = USB_CSW_STATUS_PASS;
+				pcsw->dCSWDataResidue = 0;
+				return usbdc_xfer(_mscdf_funcd.func_ep_in, ms6_buf, sizeof(ms6_buf), false);
+				
 			case SBC_READ_CAPACITY10:
 				if (NULL != mscdf_get_disk_capacity) {
 					pbuf = mscdf_get_disk_capacity(pcbw->bCBWLUN);
@@ -369,7 +378,9 @@ static bool mscdf_cb_ep_bulk_out(const uint8_t ep, const enum usb_xfer_code rc, 
 
 			case SPC_PREVENT_ALLOW_MEDIUM_REMOVAL:
 				if (0x00 == pcbw->CDB[4]) {
-					pcsw->bCSWStatus      = USB_CSW_STATUS_PASS;
+					// NO! We can't prevent yanking of cards
+					pcsw->bCSWStatus = USB_CSW_STATUS_FAIL;
+					mscdf_request_sense(ERR_UNSUPPORTED_OP);
 					pcsw->dCSWDataResidue = 0;
 					return mscdf_send_csw();
 				}
@@ -725,7 +736,7 @@ int32_t mscdf_xfer_blocks(bool rd, uint8_t *blk_addr, uint32_t blk_cnt)
 				 * All the data have been written into disk.
 				 */
 				mscdf_csw.bCSWStatus = USB_CSW_STATUS_PASS;
-				return mscdf_send_csw();
+				return mscdf_send_csw()?ERR_NONE:ERR_FAILURE;
 			} else {
 				return ERR_INVALID_ARG;
 			}

@@ -23,6 +23,13 @@ void usbd_msc_example(void);
  */
 void usb_init(void);
 
+enum usb_volume_state {NOT_READY, READY, BOUNCING};
+
+void set_state(enum usb_volume_state state);
+
+// call this from the main event loop
+void disk_task(void);
+
 #ifdef __cplusplus
 }
 #endif // __cplusplus
